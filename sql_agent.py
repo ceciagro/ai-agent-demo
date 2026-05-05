@@ -98,16 +98,34 @@ def get_bitcoin_price() -> str:
             params={"ids": "bitcoin", "vs_currencies": "usd"},
             timeout=10
         )
-        print(f"Status: {response.status_code}")
-        print(f"Response: {response.json()}")
         data = response.json()
         price = data["bitcoin"]["usd"]
         return f"Bitcoin current price: ${price:,.2f} USD"
     except Exception as e:
         return f"Error fetching Bitcoin price: {str(e)}"
 
-
-
+@tool
+def get_bitcoin_historical_price(date: str) -> str:
+    """Get the Bitcoin price for a specific date. Date format: DD-MM-YYYY. Example: 10-04-2026."""
+    from datetime import datetime, timedelta
+    try:
+        date_obj = datetime.strptime(date, "%d-%m-%Y")
+        cutoff = datetime.now() - timedelta(days=365)
+        
+        if date_obj < cutoff:
+            return f"Historical data is only available for the last 365 days. The earliest available date is {cutoff.strftime('%B %d, %Y')}."
+        
+        response = requests.get(
+            "https://api.coingecko.com/api/v3/coins/bitcoin/history",
+            params={"date": date, "localization": False},
+            timeout=10
+        )
+        data = response.json()
+        price = data["market_data"]["current_price"]["usd"]
+        return f"Bitcoin price on {date}: ${price:,.2f} USD"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    
 # LLM
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
@@ -115,13 +133,13 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 system_prompt = """You are a helpful data assistant. 
 You have access to a business database with two tables: customers and orders.
 Always check the table schema first if you're unsure about column names.
-Generate clean SQL queries and explain the results clearly.
-When filtering by text fields, always use LOWER() on both sides to handle case differences.
-Example: WHERE LOWER(status) = LOWER('processing')"""
+When filtering by text fields, always use LOWER() on both sides.
+Example: WHERE LOWER(status) = LOWER('processing')
+When using get_bitcoin_historical_price, always convert the date to DD-MM-YYYY format. For example, April 10 2025 = 10-04-2025."""
 
 
 # Agent
-agent = create_react_agent(llm, [query_database, get_table_schema, get_exchange_rate, get_weather, get_bitcoin_price], prompt=system_prompt)
+agent = create_react_agent(llm, [query_database, get_table_schema, get_exchange_rate, get_weather, get_bitcoin_price, get_bitcoin_historical_price], prompt=system_prompt)
 
 
 
