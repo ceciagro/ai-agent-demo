@@ -1,11 +1,11 @@
 import os
 import sqlite3
+import requests
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
-from dotenv import load_dotenv
-load_dotenv()
 
 # Tools
 @tool
@@ -88,11 +88,28 @@ def get_weather(city: str) -> str:
         return f"{city}: {description}, {temp}°C, humidity {humidity}%"
     except Exception as e:
         return f"Error fetching weather: {str(e)}"
+    
+@tool
+def get_bitcoin_price() -> str:
+    """Get the current Bitcoin price in USD."""
+    try:
+        response = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "bitcoin", "vs_currencies": "usd"},
+            timeout=10
+        )
+        print(f"Status: {response.status_code}")
+        print(f"Response: {response.json()}")
+        data = response.json()
+        price = data["bitcoin"]["usd"]
+        return f"Bitcoin current price: ${price:,.2f} USD"
+    except Exception as e:
+        return f"Error fetching Bitcoin price: {str(e)}"
 
 
 
 # LLM
-llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 # System prompt
 system_prompt = """You are a helpful data assistant. 
@@ -104,7 +121,7 @@ Example: WHERE LOWER(status) = LOWER('processing')"""
 
 
 # Agent
-agent = create_react_agent(llm, [query_database, get_table_schema, get_exchange_rate, get_weather], prompt=system_prompt)
+agent = create_react_agent(llm, [query_database, get_table_schema, get_exchange_rate, get_weather, get_bitcoin_price], prompt=system_prompt)
 
 
 
@@ -112,18 +129,19 @@ agent = create_react_agent(llm, [query_database, get_table_schema, get_exchange_
 if __name__ == "__main__":
     print("SQL Agent ready! Ask me anything about the database.")
     print("Type 'exit' to quit.\n")
-
+    
     conversation_history = []
     
     while True:
         user_input = input("You: ")
         if user_input.lower() == "exit":
             break
-
+        
         conversation_history.append(HumanMessage(content=user_input))
-            
+        
         result = agent.invoke({
             "messages": conversation_history
         })
+        
         conversation_history = result["messages"]
         print(f"Agent: {result['messages'][-1].content}\n")
