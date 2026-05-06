@@ -2,21 +2,62 @@
 
 A conversational AI agent that queries a business database using natural language. Built with LangGraph and OpenAI, containerized with Docker, and deployed on AWS Lambda.
 
+## Architecture
+
+```mermaid
+flowchart TD
+    User(["👤 User"])
+
+    User -->|message| Reason
+
+    subgraph LangGraph ["⚙️ LangGraph · ReAct Agent"]
+        direction TB
+        History["🗂️ Conversation History\nlast 6 turns"]
+        Reason["🧠 Reason\nGPT-4o-mini"]
+        Decision{Tool needed?}
+        Act["⚡ Act\ntool call"]
+        Observe["👁️ Observe\ntool result"]
+        Answer["✅ Final Answer"]
+
+        History -->|context| Reason
+        Reason --> Decision
+        Decision -->|yes| Act
+        Act --> Observe
+        Observe -->|loop back| Reason
+        Decision -->|no| Answer
+    end
+
+    subgraph Tools ["🔧 Tools"]
+        direction LR
+        DB[("SQLite DB\nquery_database\nget_table_schema")]
+        FX["💱 Exchange Rate\ndolarapi.com"]
+        WX["🌤️ Weather\nOpenWeatherMap"]
+        BTC["₿ Bitcoin\nCoinGecko"]
+    end
+
+    Act --> Tools
+    Tools --> Observe
+
+    Answer -->|response + token report| User
+    Answer -->|trim & store| History
+```
+
 ## Features
 
 - Natural language to SQL queries
-- Conversational memory across questions
+- ReAct agent loop (Reason → Act → Observe)
+- Conversational memory (last 6 turns)
 - Real-time exchange rate (dolarapi.com)
 - Real-time weather data (OpenWeatherMap)
-- Case-insensitive query handling
+- Bitcoin price — current and historical (CoinGecko)
+- Per-query token usage and cost tracking
 - Deployed on AWS Lambda
 
 ## Tech Stack
 
 - Python 3.11
-- LangGraph
-- LangChain
-- OpenAI GPT-3.5
+- LangGraph + LangChain
+- OpenAI GPT-4o-mini
 - SQLite
 - Docker
 - AWS Lambda + ECR

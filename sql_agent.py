@@ -5,12 +5,13 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
+from langchain_community.callbacks import get_openai_callback
 from langgraph.prebuilt import create_react_agent
 
 # Tools
 @tool
 def query_database(sql: str) -> str:
-    """Execute a SQL query against the business database and return the results."""
+    """Run a SQL query on the business DB and return results."""
     try:
         conn = sqlite3.connect("business.db")
         conn.create_function("LOWER", 1, str.lower)
@@ -34,7 +35,7 @@ def query_database(sql: str) -> str:
 
 @tool
 def get_table_schema(table_name: str) -> str:
-    """Get the schema of a table to understand its structure before querying."""
+    """Get column details for a table (use only if schema is unclear)."""
     try:
         conn = sqlite3.connect("business.db")
         cursor = conn.cursor()
@@ -47,7 +48,7 @@ def get_table_schema(table_name: str) -> str:
 
 @tool
 def get_exchange_rate(currency: str) -> str:
-    """Get the current exchange rate for a currency against ARS (Argentine Peso)."""
+    """Get exchange rate for a currency vs ARS. E.g. 'oficial', 'blue', 'crypto'."""
     import requests
     try:
         response = requests.get("https://dolarapi.com/v1/dolares")
@@ -64,7 +65,7 @@ def get_exchange_rate(currency: str) -> str:
 
 @tool
 def get_weather(city: str) -> str:
-    """Get the current weather for a city."""
+    """Get current weather for a city."""
     import requests
     api_key = os.getenv("OPENWEATHER_API_KEY")
     try:
@@ -91,7 +92,7 @@ def get_weather(city: str) -> str:
     
 @tool
 def get_bitcoin_price() -> str:
-    """Get the current Bitcoin price in USD."""
+    """Get current Bitcoin price in USD."""
     try:
         response = requests.get(
             "https://api.coingecko.com/api/v3/simple/price",
@@ -106,7 +107,7 @@ def get_bitcoin_price() -> str:
 
 @tool
 def get_bitcoin_historical_price(date: str) -> str:
-    """Get the Bitcoin price for a specific date. Date format: DD-MM-YYYY. Example: 10-04-2026."""
+    """Get Bitcoin price for a past date (last 365 days). Date format: DD-MM-YYYY."""
     from datetime import datetime, timedelta
     try:
         date_obj = datetime.strptime(date, "%d-%m-%Y")
@@ -130,12 +131,16 @@ def get_bitcoin_historical_price(date: str) -> str:
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 # System prompt
-system_prompt = """You are a helpful data assistant. 
-You have access to a business database with two tables: customers and orders.
-Always check the table schema first if you're unsure about column names.
-When filtering by text fields, always use LOWER() on both sides.
-Example: WHERE LOWER(status) = LOWER('processing')
-When using get_bitcoin_historical_price, always convert the date to DD-MM-YYYY format. For example, April 10 2025 = 10-04-2025."""
+system_prompt = """You are a helpful data assistant.
+
+DB SCHEMA:
+- customers(id INTEGER, name TEXT, email TEXT, city TEXT)
+- orders(id INTEGER, customer_id INTEGER, product TEXT, amount REAL, status TEXT, date TEXT)
+
+Rules:
+- Use LOWER() on both sides for text filters: WHERE LOWER(status) = LOWER('processing')
+- For get_bitcoin_historical_price use DD-MM-YYYY format
+- Only call get_table_schema if you need details not shown above"""
 
 
 # Agent
@@ -143,23 +148,36 @@ agent = create_react_agent(llm, [query_database, get_table_schema, get_exchange_
 
 
 
+MAX_HISTORY_TURNS = 6  # keep last N human+assistant message pairs
+
+def trim_history(messages, max_turns):
+    """Keep only the last max_turns of human/assistant exchanges, dropping intermediate tool messages."""
+    from langchain_core.messages import HumanMessage, AIMessage
+    clean = [(i, m) for i, m in enumerate(messages) if isinstance(m, (HumanMessage, AIMessage)) and not getattr(m, "tool_calls", None)]
+    if len(clean) > max_turns * 2:
+        cutoff_idx = clean[-(max_turns * 2)][0]
+        return messages[cutoff_idx:]
+    return messages
+
 # Interactive loop
 if __name__ == "__main__":
     print("SQL Agent ready! Ask me anything about the database.")
     print("Type 'exit' to quit.\n")
-    
+
     conversation_history = []
-    
+
     while True:
         user_input = input("You: ")
         if user_input.lower() == "exit":
             break
-        
+
         conversation_history.append(HumanMessage(content=user_input))
-        
-        result = agent.invoke({
-            "messages": conversation_history
-        })
-        
-        conversation_history = result["messages"]
+
+        with get_openai_callback() as cb:
+            result = agent.invoke({
+                "messages": conversation_history
+            })
         print(f"Agent: {result['messages'][-1].content}\n")
+        print(f"[tokens] in={cb.prompt_tokens} out={cb.completion_tokens} total={cb.total_tokens} cost=${cb.total_cost:.4f}\n")
+
+        conversation_history = trim_history(result["messages"], MAX_HISTORY_TURNS)
